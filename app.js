@@ -7,9 +7,9 @@ const Schema = mongoose.Schema;
 const bodyParser = require('body-parser');
 const WooCommerceAPI = require('woocommerce-api');
 const axios = require('axios');
-// const order = require('./testData.json');
+// const testData = require('./testData.json');
 const cron = require('node-cron');
- 
+
 const WooCommerce = new WooCommerceAPI({
     url: 'https://kingdomsgf.com',
     consumerKey: process.env.CONS_KEY,
@@ -19,19 +19,28 @@ const WooCommerce = new WooCommerceAPI({
     // queryStringAuth: true
 });
 
-mongoose.connect(process.env.MONGO_URI, {useNewUrlParser: true});
+const db = mongoose.connect(process.env.MONGO_URI, {
+    useNewUrlParser: true
+});
 
 const orderSchema = new Schema({
-    date: { type : Date, default: Date.now },
-    order_forced: Boolean,
+    _id: {
+        type: Schema.ObjectId,
+        auto: true
+    },
+    date: {
+        type: Date,
+        default: Date.now
+    },
+    created_via: String,
     payment_method: String,
     payment_method_title: String,
     set_paid: Boolean,
     status: String,
     total: String,
-    order_type: String, 
+    order_type: String,
     parent_id: Number,
-    billing: { 
+    billing: {
         first_name: String,
         last_name: String,
         address_1: String,
@@ -60,53 +69,59 @@ const orderSchema = new Schema({
 const Order = mongoose.model("Order", orderSchema);
 
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({
+    extended: true
+}));
 
 const baseUrl = 'https://kingdomsgf.com/wp-json/wc/v3';
 
 
-app.get('/', (req, res, next) => { 
+app.get('/', (req, res, next) => {
     res.sendStatus(200);
     res.end();
+
 
 });
 
-app.post('/', (req, res, next) => { 
+app.post('/', (req, res, next) => {
     res.sendStatus(200);
-    res.end();
+    // res.end();
 
     const order = req.body;
+    console.log('Order received');
 
     //If incoming order was just created by this program, disregard it as to not create an infinite loop.
-    if(order.created_via === "rest-api") {
+    if (order.created_via === "rest-api") {
         console.log('Order was already created with rest-api. Will not place new order.');
         return
-    } else {
+    } else if (order.status === "processing") {
         // If order has been paid for
-        if(order.status === "processing") {
 
-            const items = order.line_items;
-            let verify = false;
+        const items = order.line_items;
+        let verify = false;
 
-            // Check all line items to see if they are within a subscription that needs to ship more than once a month
-            for(i = 0; i < items.length; i++) {
-                if(items[i].name.includes('2 - 12oz Bags Monthly') ||  items[i].name.includes('4 - 12oz Bags Monthly')) {
-                    verify = true;
-                }
+        // Check all line items to see if they are within a subscription that needs to ship more than once a month
+        for (i = 0; i < items.length; i++) {
+            if (items[i].name.includes('2 - 12oz Bags Monthly') || items[i].name.includes('4 - 12oz Bags Monthly')) {
+                verify = true;
+            } else {
+                console.log('Item(s) do not need bi-monthly shipping');
+
             }
-            
-            // If items need to ship more than once a month
-            if(verify) {
-    
+        }
+
+        // If items need to ship more than once a month
+        if (verify) {
+
             // Create new order based on order just recieved.     
             const newOrder = new Order({
-                order_forced: true,
                 payment_method: order.billing.payment_method,
                 payment_method_title: order.billing.payment_method_title,
+                created_via: "rest-api",
                 set_paid: false,
                 status: "processing",
                 total: "0.00",
-                order_type: "renewal_order", 
+                order_type: "renewal_order",
                 parent_id: order.parent_id,
                 billing: {
                     first_name: order.billing.first_name,
@@ -133,7 +148,7 @@ app.post('/', (req, res, next) => {
                 line_items: order.line_items,
                 shipping_lines: order.shipping_lines
             });
-                
+
             // Save the new order to db
             newOrder.save(function (err) {
                 if (err) {
@@ -141,74 +156,81 @@ app.post('/', (req, res, next) => {
                 } else {
                     console.log('Saved to db');
                 }
-                });
+            });
 
-            }   
         }
+
     }
-    
+
 });
 
 //Run a cron job every day that queries all orders stored in db
-const queryschedule = cron.schedule('0,10 * * * * *', () => {
-    console.log('Runing a job at 08:00 at America/Sao_Paulo timezone');
+const queryschedule = cron.schedule('0,30 * * * * *', () => {
+    console.log('Running a job at 08:00 at America/Chicago timezone');
 
-    Order.find({},'-_id -line_items -shipping_lines', function(err, orders) {
-        if(err) {
+    Order.find({}, '-line_items -shipping_lines', function (err, orders) {
+        if (err) {
             console.log(err);
-        }
-        for(i = 0; i < orders.length; i++) {
-            // Taken from Punit Jajodia https://www.toptal.com/software/definitive-guide-to-datetime-manipulation
-            const dateOfOrder = orders[i].date;
-            const now = new Date();
-            const datefromAPITimeStamp = (new Date(dateOfOrder)).getTime();
-            const nowTimeStamp = now.getTime();
+        } else {
 
-            const microSecondsDiff = Math.abs(datefromAPITimeStamp - nowTimeStamp );
-            // Number of milliseconds per day =
-            //   24 hrs/day * 60 minutes/hour * 60 seconds/minute * 1000 msecs/second
-            const daysDiff = Math.floor(microSecondsDiff/(1000 * 60 * 60  * 24));
-            
-            console.log(daysDiff);
+            let ordersArr = [];
 
-            // If it is exactly 15 days from the triggering order, post the new order
-            if (daysDiff === 15) {
+            orders.forEach(function (order) {
+                // Taken from Punit Jajodia https://www.toptal.com/software/definitive-guide-to-datetime-manipulation
+                const dateOfOrder = order.date;
+                const now = new Date();
+                const datefromAPITimeStamp = (new Date(dateOfOrder)).getTime();
+                const nowTimeStamp = now.getTime();
 
-                // ?consumer_key=${process.env.CONS_KEY}&consumer_secret=${process.env.CONS_SEC}
+                const microSecondsDiff = Math.abs(datefromAPITimeStamp - nowTimeStamp);
+                // Number of milliseconds per day =
+                //   24 hrs/day * 60 minutes/hour * 60 seconds/minute * 1000 msecs/second
+                const daysDiff = Math.floor(microSecondsDiff / (1000 * 60 * 60 * 24));
 
-                //console.log(orders[i]);
+                // console.log(daysDiff);
 
-                // axios.post(baseUrl + `/orders?consumer_key=${process.env.CONS_KEY}&consumer_secret=${process.env.CONS_SEC}`, orders[i])
-                // .then(function (response) {
-                //     console.log(response.data);
+                // If it is exactly 15 days from the triggering order, post the new order
+                if (daysDiff === 0) {
+                    ordersArr.push(order);
+                }
+            });
 
-                // })
-                // .catch(function (error) {
-                //     // handle error
-                //     console.log(error.response.status);
-                //     // console.log(error);
-                // })
-                // .then(function () {
-                    
-                // });
-            }
+            // console.log(ordersArr);
 
-            if (daysDiff === 0) {
-                //Remove orders that are 25 days old from the db
-                orders[i].remove(function(err,result) {
-                    if(err) {
-                        console.log(err);
-                    }
-                    console.log(result);
-                });
-            }
+
+            ordersArr.forEach(function (order) {
+                axios.post(baseUrl + `/orders?consumer_key=${process.env.CONS_KEY}&consumer_secret=${process.env.CONS_SEC}`, order)
+                    .then(function (response) {
+                        console.log(response)
+                        //Remove orders that are 25 days old from the db
+                        Order.deleteOne({
+                            _id: order._id
+                        }, function (err, result) {
+                            if (err) {
+                                console.log(err);
+                                queryschedule.stop();
+                            } else if (result) {
+                                console.log('Removed');
+                            }
+                        });
+                    })
+                    .catch(function (error) {
+                        // handle error
+                        console.log('There was an error sending new order to Kingdom ::: ', error);
+                        // console.log(error);
+                    })
+                    .then(function () {
+
+
+                    });
+            });
+
         }
     });
-
 }, {
     scheduled: true,
-    timezone: "America/Sao_Paulo"
-  });
+    timezone: "America/Chicago"
+});
 
 // axios.get(baseUrl + `/orders/73112?consumer_key=${process.env.CONS_KEY}&consumer_secret=${process.env.CONS_SEC}`)
 //     .then(function(response) {
