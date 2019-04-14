@@ -10,6 +10,7 @@ const axios = require('axios');
 // const testData = require('./testData.json');
 const cron = require('node-cron');
 
+
 const WooCommerce = new WooCommerceAPI({
     url: 'https://kingdomsgf.com',
     consumerKey: process.env.CONS_KEY,
@@ -20,8 +21,11 @@ const WooCommerce = new WooCommerceAPI({
 });
 
 const db = mongoose.connect(process.env.MONGO_URI, {
-    useNewUrlParser: true
-});
+    useNewUrlParser: true,
+    family: 4,
+    connectTimeoutMS: 10000,
+    auto_reconnect: true
+}).catch(err => console.log(err));
 
 const orderSchema = new Schema({
     _id: {
@@ -79,13 +83,11 @@ const baseUrl = 'https://kingdomsgf.com/wp-json/wc/v3';
 app.get('/', (req, res, next) => {
     res.sendStatus(200);
     res.end();
-
-
 });
 
 app.post('/', (req, res, next) => {
     res.sendStatus(200);
-    // res.end();
+    res.end();
 
     const order = req.body;
     console.log('Order received');
@@ -99,6 +101,8 @@ app.post('/', (req, res, next) => {
 
         const items = order.line_items;
         let verify = false;
+
+        console.log('Reached just past order === processing');
 
         // Check all line items to see if they are within a subscription that needs to ship more than once a month
         for (i = 0; i < items.length; i++) {
@@ -150,11 +154,11 @@ app.post('/', (req, res, next) => {
             });
 
             // Save the new order to db
-            newOrder.save(function (err) {
+            newOrder.save(function (err, order) {
                 if (err) {
                     console.log(err);
                 } else {
-                    console.log('Saved to db');
+                    console.log(`This order saved to db: ${order._id}`);
                 }
             });
 
@@ -165,7 +169,7 @@ app.post('/', (req, res, next) => {
 });
 
 //Run a cron job every day that queries all orders stored in db
-const queryschedule = cron.schedule('0,30 * * * * *', () => {
+const queryschedule = cron.schedule('0 8 * * *', () => {
     console.log('Running a job at 08:00 at America/Chicago timezone');
 
     Order.find({}, '-line_items -shipping_lines', function (err, orders) {
@@ -187,22 +191,17 @@ const queryschedule = cron.schedule('0,30 * * * * *', () => {
                 //   24 hrs/day * 60 minutes/hour * 60 seconds/minute * 1000 msecs/second
                 const daysDiff = Math.floor(microSecondsDiff / (1000 * 60 * 60 * 24));
 
-                // console.log(daysDiff);
-
                 // If it is exactly 15 days from the triggering order, post the new order
-                if (daysDiff === 0) {
+                if (daysDiff === 15) {
                     ordersArr.push(order);
                 }
             });
 
-            // console.log(ordersArr);
-
-
             ordersArr.forEach(function (order) {
                 axios.post(baseUrl + `/orders?consumer_key=${process.env.CONS_KEY}&consumer_secret=${process.env.CONS_SEC}`, order)
                     .then(function (response) {
-                        console.log(response)
-                        //Remove orders that are 25 days old from the db
+                        // console.log(response)
+                        //Remove orders from db after they are created
                         Order.deleteOne({
                             _id: order._id
                         }, function (err, result) {
@@ -217,10 +216,8 @@ const queryschedule = cron.schedule('0,30 * * * * *', () => {
                     .catch(function (error) {
                         // handle error
                         console.log('There was an error sending new order to Kingdom ::: ', error);
-                        // console.log(error);
                     })
                     .then(function () {
-
 
                     });
             });
@@ -232,12 +229,6 @@ const queryschedule = cron.schedule('0,30 * * * * *', () => {
     timezone: "America/Chicago"
 });
 
-// axios.get(baseUrl + `/orders/73112?consumer_key=${process.env.CONS_KEY}&consumer_secret=${process.env.CONS_SEC}`)
-//     .then(function(response) {
-//         console.log(response.data.created_via)
-//     })
-//     .catch(function(err) {
-//         console.log(err)
-//     });
-
-app.listen(port, () => console.log(`Example app listening on port ${port}!`));
+app.listen(process.env.PORT || port, function () {
+    console.log('App listening on port: ', port)
+});

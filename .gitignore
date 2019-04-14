@@ -85,3 +85,6 @@ typings/
 
 # Test Data
 testData.json
+
+# Now
+.nowignore

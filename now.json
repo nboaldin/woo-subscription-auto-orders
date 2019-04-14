@@ -1,0 +1,10 @@
+{
+    "version": 1,
+    "name": "wc sub reorder",
+    "env": {
+        "MONGO_URI": "@mongo",
+        "CONS_SEC": "@wc-sec",
+        "CONS_KEY": "@wc-key"
+
+    }
+}
