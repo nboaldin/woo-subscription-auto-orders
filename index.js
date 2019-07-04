@@ -80,9 +80,9 @@ app.use(bodyParser.urlencoded({
 const baseUrl = 'https://kingdomsgf.com/wp-json/wc/v3';
 
 
-app.get('/', (req, res, next) => {
+app.get("/", (req, res) => {
+    console.log(Date.now() + " Ping Received");
     res.sendStatus(200);
-    res.end();
 });
 
 app.post('/', (req, res, next) => {
@@ -229,6 +229,6 @@ const queryschedule = cron.schedule('0 8 * * *', () => {
     timezone: "America/Chicago"
 });
 
-app.listen(process.env.PORT || port, function () {
-    console.log('App listening on port: ', port)
-});
+app.listen(process.env.PORT || port, setInterval(() => {
+    http.get(`http://${process.env.PROJECT_DOMAIN}.glitch.me/`);
+  }, 280000));
